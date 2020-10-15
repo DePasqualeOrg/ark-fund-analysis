@@ -1,0 +1,11 @@
+jupyterlab
+colour
+requests
+exchange_calendars
+cfscrape
+pandas
+pytz
+ipython
+python_dateutil
+matplotlib
+beautifulsoup4
