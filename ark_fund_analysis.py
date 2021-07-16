@@ -317,7 +317,7 @@ def process_percent_ownership(df):
     for index in df.index:
         ticker = df.loc[index, 'ticker']
         # IEX Cloud
-        if pd.notna(df.loc[index, 'ticker']) and ticker in all_stocks_info and all_stocks_info[ticker]['stats'] is not None and all_stocks_info[ticker]['stats']['sharesOutstanding'] != 0:
+        if pd.notna(df.loc[index, 'ticker']) and ticker in all_stocks_info and all_stocks_info[ticker]['stats'] is not None and all_stocks_info[ticker]['stats']['sharesOutstanding'] != 0 and all_stocks_info[ticker]['stats']['marketcap'] is not None:
             df.loc[index, 'market_cap'] = all_stocks_info[ticker]['stats']['marketcap'] / 1000000000
             df.loc[index, 'shares_outstanding'] = all_stocks_info[ticker]['stats']['sharesOutstanding']
             df.loc[index, 'percent_ownership'] = df.loc[index, 'shares'] / df.loc[index, 'shares_outstanding']
