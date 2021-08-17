@@ -131,7 +131,7 @@ symbols_with_spaces = []
 def process_df(df):
     df_copy = df.copy()
     # Use lowercase symbols in code and uppercase for display
-    for index in df_copy.index:
+    for index, row in df_copy.iterrows():
         if not pd.isnull(df_copy.loc[index, 'ticker']):
             # Remove endings and whitespace from symbols
             df_copy.loc[index, 'ticker'] = df_copy.loc[index, 'ticker'].strip().lower() # Remove trailing and leading whitespace from symbols, and make lowercase
@@ -190,32 +190,32 @@ def process_for_change_in_holdings(df1, df2, fund):
     # Not merging on 'company' column, because sometimes company names change in CSV files
     merged = pd.merge(df1, df2, on=['fund', 'cusip', 'ticker'], how='outer') # `how='outer'` keeps non-matching rows
     # Use most recent company name from CSVs
-    for i in merged.index:
-        if pd.notna(merged.loc[i, 'company_y']):
-            merged.loc[i, 'company_x'] = merged.loc[i, 'company_y'] # Using `company_x` to display, so need to copy more recent name
-        if merged.loc[i, 'ticker'] in stock_splits:
-            if stock_splits[merged.loc[i, 'ticker']]['date'].date() >= switchover:
+    for index, row in merged.iterrows():
+        if pd.notna(row['company_y']):
+            merged.loc[index, 'company_x'] = row['company_y'] # Using `company_x` to display, so need to copy more recent name
+        if row['ticker'] in stock_splits:
+            if stock_splits[row['ticker']]['date'].date() >= switchover:
                 # Move ahead one day to adjust for ARK's dating of CSV files (see note above)
-                split_date_adjusted = us_calendar.next_open(stock_splits[merged.loc[i, 'ticker']]['date'].date() + pd.DateOffset(1)).date()
+                split_date_adjusted = us_calendar.next_open(stock_splits[row['ticker']]['date'].date() + pd.DateOffset(1)).date()
             else:
-                split_date_adjusted = stock_splits[merged.loc[i, 'ticker']]['date'].date()
+                split_date_adjusted = stock_splits[row['ticker']]['date'].date()
             if split_date_adjusted > start_date and split_date_adjusted <= end_date:
-                merged.loc[i, 'split_factor'] = stock_splits[merged.loc[i, 'ticker']]['factor']
-                merged.loc[i, 'shares_y'] /= merged.loc[i, 'split_factor']
-                merged.loc[i, 'share_price_y'] *= merged.loc[i, 'split_factor']
+                merged.loc[index, 'split_factor'] = stock_splits[row['ticker']]['factor']
+                merged.loc[index, 'shares_y'] /= merged.loc[index, 'split_factor']
+                merged.loc[index, 'share_price_y'] *= merged.loc[index, 'split_factor']
     merged['change_in_share_price'] = (merged['share_price_y'] - merged['share_price_x']) / merged['share_price_x']
     merged['change_in_value'] = (merged['market value($)_y'] - merged['market value($)_x']) / merged['market value($)_x']
     merged['change_in_weight'] = merged['weight(%)_y'] - merged['weight(%)_x']
     merged['relative_change_in_weight'] = merged['change_in_weight'] / merged['weight(%)_x']
     merged['change_in_shares'] = merged['shares_y'] - merged['shares_x']
     merged['percent_change_in_shares'] = merged['change_in_shares'] / merged['shares_x']
-    for i in merged.index:
-        if pd.isna(merged.loc[i, 'weight(%)_x']):
-            merged.loc[i, 'sort_rank'] = 1000000
-        elif pd.isna(merged.loc[i, 'weight(%)_y']):
-            merged.loc[i, 'sort_rank'] = -1000000
+    for index, row in merged.iterrows():
+        if pd.isna(row['weight(%)_x']):
+            merged.loc[index, 'sort_rank'] = 1000000
+        elif pd.isna(row['weight(%)_y']):
+            merged.loc[index, 'sort_rank'] = -1000000
         else:
-            merged.loc[i, 'sort_rank'] = merged.loc[i, 'percent_change_in_shares']
+            merged.loc[index, 'sort_rank'] = merged.loc[index, 'percent_change_in_shares']
     merged = add_totals(merged)
     merged = merged.sort_values(by=['sort_rank', 'percent_change_in_shares'], ascending=False).reset_index(drop=True)
     merged.rename(index={merged.index[-1]: 'Total'}, inplace=True) # Need to rename last row of index after resetting index
@@ -251,9 +251,7 @@ def total_row_bold(df):
 def apply_style(df):
     # Necessary for string formatting of entire column. Make na values empty string
     if 'ticker' in df:
-        for i in df.index:
-            if pd.isna(df.loc[i, 'ticker']):
-                df.loc[i, 'ticker'] = ''
+        df['ticker'] = df.apply(lambda row: '' if pd.isna(row['ticker']) else row['ticker'], axis=1)
     if df.index.name == 'Symbol':
         df.index = df.index.map(str.upper)
     styled = df.rename(columns=column_names).style.format(number_formats).applymap(negative_red_hide_empty).set_properties(**{'background-color': ''})
@@ -283,8 +281,8 @@ def process_for_change_in_value(change_in_holdings_df):
     change_in_value_df = change_in_holdings_df[['company_x', 'ticker', 'weight(%)_x', 'change_in_share_price', 'change_in_value']].drop(index='Total').copy()
     change_in_value_df['contribution'] = change_in_value_df['weight(%)_x'] * change_in_value_df['change_in_share_price']
     change_in_value_df['contribution_abs'] = abs(change_in_value_df['contribution'])
-    for i in change_in_value_df.index:
-        change_in_share_price = change_in_value_df.loc[i, 'change_in_share_price']
+    for index, row in change_in_value_df.iterrows():
+        change_in_share_price = row['change_in_share_price']
         cisp_clamp_abs = abs(clamp(change_in_share_price, -clamp_threshold, clamp_threshold))
         if change_in_share_price >= 0:
             color = green
@@ -292,7 +290,7 @@ def process_for_change_in_value(change_in_holdings_df):
         else:
             color = red
             color.luminance = max_lum - (lum_diff * (cisp_clamp_abs / clamp_threshold))
-        change_in_value_df.loc[i, 'color'] = color.hex
+        change_in_value_df.loc[index, 'color'] = color.hex
     change_in_value_df = change_in_value_df.sort_values(by=['contribution'], ascending=False).reset_index(drop=True)
     change_in_value_df = change_in_value_df.reset_index(drop=True) # Sort all rows except last row (totals)
     change_in_value_df.loc['Total', 'weight(%)_x'] = change_in_value_df['weight(%)_x'].sum()
@@ -314,10 +312,10 @@ def process_for_sort_by_weight(df):
     return df_copy
 
 def process_percent_ownership(df):
-    for index in df.index:
+    for index, row in df.iterrows():
         ticker = df.loc[index, 'ticker']
         # IEX Cloud
-        if pd.notna(df.loc[index, 'ticker']) and ticker in all_stocks_info and all_stocks_info[ticker]['stats'] is not None and all_stocks_info[ticker]['stats']['sharesOutstanding'] != 0 and all_stocks_info[ticker]['stats']['marketcap'] is not None:
+        if pd.notna(row['ticker']) and ticker in all_stocks_info and all_stocks_info[ticker]['stats'] is not None and all_stocks_info[ticker]['stats']['sharesOutstanding'] != 0 and all_stocks_info[ticker]['stats']['marketcap'] is not None:
             df.loc[index, 'market_cap'] = all_stocks_info[ticker]['stats']['marketcap'] / 1000000000
             df.loc[index, 'shares_outstanding'] = all_stocks_info[ticker]['stats']['sharesOutstanding']
             df.loc[index, 'percent_ownership'] = df.loc[index, 'shares'] / df.loc[index, 'shares_outstanding']
@@ -468,11 +466,11 @@ for fund in funds:
     for file in funds[fund]['files']:
         funds[fund]['dfs'].append(process_df(pd.read_csv(file)))
     companies_data = {'symbol': [], 'company': []}
-    for i in funds[fund]['dfs'][-1].index:
-        ticker = funds[fund]['dfs'][-1].loc[i, 'ticker']
+    for index, row in funds[fund]['dfs'][-1].iterrows():
+        ticker = funds[fund]['dfs'][-1].loc[index, 'ticker']
         if not pd.isna(ticker):
             companies_data['symbol'].append(ticker)
-            companies_data['company'].append(funds[fund]['dfs'][-1].loc[i, 'company'])
+            companies_data['company'].append(funds[fund]['dfs'][-1].loc[index, 'company'])
     funds[fund]['companies_df'] = pd.DataFrame.from_dict(companies_data, orient='columns').set_index('symbol')
     funds[fund]['daily_price_df'] = pd.read_csv(base_dir / f'data/ark_fund_daily_price_data/{fund}.csv').set_index('timestamp')
     funds[fund]['daily_price_df'].index = pd.to_datetime(funds[fund]['daily_price_df'].index, format='%Y-%m-%d').date # Convert to datetime object and display only date without time
