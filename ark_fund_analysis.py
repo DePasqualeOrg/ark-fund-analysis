@@ -19,6 +19,9 @@ from colour import Color
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
+import tabula
+import camelot
+
 base_dir = Path(__file__).parent.absolute()
 
 utc = tz.tzutc()
@@ -39,12 +42,12 @@ column_names = {
     'company_x': 'Company',
     'ticker': 'Symbol',
     'shares': 'Shares',
-    'market value($)': 'Market value',
-    'market value($)_x': 'Market value 1',
-    'market value($)_y': 'Market value 2',
-    'weight(%)': 'Weight',
-    'weight(%)_x': 'Weight 1',
-    'weight(%)_y': 'Weight 2',
+    'market value ($)': 'Market value',
+    'market value ($)_x': 'Market value 1',
+    'market value ($)_y': 'Market value 2',
+    'weight (%)': 'Weight',
+    'weight (%)_x': 'Weight 1',
+    'weight (%)_y': 'Weight 2',
     'fund_x': 'Fund 1',
     'fund_y': 'Fund 2',
     'change_in_weight': 'Change in weight',
@@ -80,16 +83,16 @@ perc_two_dec_sign = '{:+.2%}' # Percent, round to two decimal places, sign
 dollars_two_dec = '${:,.2f}' # Dollar sign, comma separator, round to two decimal places
 number_formats = {
     column_names['shares']: int_comma_sep,
-    column_names['market value($)']: dollars_int,
-    column_names['weight(%)']: perc_two_dec,
+    column_names['market value ($)']: dollars_int,
+    column_names['weight (%)']: perc_two_dec,
     column_names['shares']: int_comma_sep,
-    column_names['market value($)']: dollars_int,
+    column_names['market value ($)']: dollars_int,
     column_names['shares_x']: int_comma_sep,
-    column_names['market value($)_x']: dollars_int,
-    column_names['weight(%)_x']: perc_two_dec,
+    column_names['market value ($)_x']: dollars_int,
+    column_names['weight (%)_x']: perc_two_dec,
     column_names['shares_y']: int_comma_sep,
-    column_names['market value($)_y']: dollars_int,
-    column_names['weight(%)_y']: perc_two_dec,
+    column_names['market value ($)_y']: dollars_int,
+    column_names['weight (%)_y']: perc_two_dec,
     column_names['change_in_weight']: perc_two_dec_sign,
     column_names['relative_change']: perc_two_dec_sign,
     column_names['change_in_shares']: '{:+,.0f}', # Round to integer, comma separator, sign
@@ -130,6 +133,41 @@ symbols_with_spaces = []
 
 def process_df(df):
     df_copy = df.copy()
+    df_date = pd.to_datetime(df_copy['date'][0], format='%m/%d/%Y').date()
+    df_fund = df_copy['fund'][0].lower()
+    # Add `shares` column from PDF if necessary (share counts not included in CSV files for 4 and 5 October 2021)
+    if 'shares' not in df_copy.columns:
+        # Check for cached CSV with `shares` column from PDF
+        combined_csv_path = base_dir / 'data/ark_fund_holdings/csv_with_shares' / df_date.strftime(f'{df_fund}_%Y_%m_%d.csv')
+        if os.path.isfile(combined_csv_path):
+            # Use existing file
+            df_copy = pd.read_csv(combined_csv_path)
+        else:
+            # Process PDF and use share count from PDF
+            pdf_path = base_dir / 'data/ark_fund_holdings/pdf' / df_date.strftime(f'{df_fund}_%Y_%m_%d.pdf')
+            if not os.path.isfile(pdf_path):
+                raise Exception('The CSV file does not contain the `shares` column, and no corresponding PDF file exists.')
+            else:
+                tabula_tables = tabula.read_pdf(pdf_path, pages='all')
+                # tabula correctly parses the column headers on the second page, but not the first page
+                column_headers = tabula_tables[1].set_index(keys='#').columns
+                camelot_tables = camelot.read_pdf(str(pdf_path), pages='all')
+                full_df = pd.concat([table.df.set_index(keys=0) for table in camelot_tables])
+                full_df = full_df.set_axis(column_headers, axis=1) # Add column headers from tabula
+                full_df.index.names = ['']
+                # Rename columns to match CSV files
+                full_df.rename(columns={'CUSIP': 'cusip', 'Shares': 'shares'}, inplace=True)
+                # Convert `Shares` column to integers
+                full_df['shares'] = full_df['shares'].apply(lambda x: pd.to_numeric(x.replace(',', '')))
+                partial_df = full_df[['cusip', 'shares']].copy()
+                df_copy = pd.merge(df_copy, partial_df, on=['cusip'], how='outer')
+                # Save cached copy of CSV file with shares column from PDF
+                df_copy.to_csv(combined_csv_path)
+    # Rename columns if necessary (naming in CSV files changed on 4 October 2021)
+    if 'market value($)' in df_copy.columns:
+        df_copy.rename(columns={'market value($)': 'market value ($)'}, inplace=True)
+    if 'weight(%)' in df_copy.columns:
+        df_copy.rename(columns={'weight(%)': 'weight (%)'}, inplace=True)
     # Use lowercase symbols in code and uppercase for display
     for index, row in df_copy.iterrows():
         if not pd.isnull(df_copy.loc[index, 'ticker']):
@@ -149,13 +187,21 @@ def process_df(df):
             if ' ' in df_copy.loc[index, 'ticker']:
                 symbols_with_spaces.append(df_copy.loc[index, 'ticker'])
     # Aggregate multiple rows with same asset (e.g. Japanese yen)
-    aggregate_functions = {'date': 'first', 'fund': 'first', 'company': 'first', 'ticker': 'first', 'cusip': 'first', 'shares': 'sum', 'market value($)': 'sum', 'weight(%)': 'sum'}
-    df_copy = df_copy.groupby(df_copy['cusip'], as_index=False).aggregate(aggregate_functions).sort_values(by=['weight(%)'], ascending=False).reset_index(drop=True)
+    aggregate_functions = {'date': 'first', 'fund': 'first', 'company': 'first', 'ticker': 'first', 'cusip': 'first', 'shares': 'sum', 'market value ($)': 'sum', 'weight (%)': 'sum'}
+    df_copy = df_copy.groupby(df_copy['cusip'], as_index=False).aggregate(aggregate_functions).sort_values(by=['weight (%)'], ascending=False).reset_index(drop=True)
     df_copy.dropna(subset=['fund'], inplace=True)
     df_copy['date'] = pd.to_datetime(df_copy['date'], format='%m/%d/%Y').dt.date # Convert to datetime object and display only date without time
-    total_value = df_copy['market value($)'].sum()
-    df_copy['share_price'] = df_copy['market value($)'] / df_copy['shares']
-    df_copy['weight(%)'] = df_copy['market value($)'] / total_value # Recalculate to remove rounding errors
+    # Some columns are formatted as strings in the CSV files starting on 4 October 2021. These need to be converted to floats.
+    if 'shares' in df_copy and df_copy['shares'].dtype == object and isinstance(df_copy.iloc[0]['shares'], str):
+        df_copy['shares'] = df_copy['shares'].apply(lambda x: pd.to_numeric(x.replace(',', '')))
+    if df_copy['market value ($)'].dtype == object and isinstance(df_copy.iloc[0]['market value ($)'], str):
+        df_copy['market value ($)'] = df_copy['market value ($)'].apply(lambda x: pd.to_numeric(x.replace(',', '').replace('$', '')))
+    if df_copy['weight (%)'].dtype == object and isinstance(df_copy.iloc[0]['weight (%)'], str):
+        df_copy['weight (%)'] = df_copy['weight (%)'].apply(lambda x: pd.to_numeric(x.replace('%', '')))
+    total_value = df_copy['market value ($)'].sum()
+    df_copy['share_price'] = df_copy['market value ($)'] / df_copy['shares']
+    df_copy['weight (%)'] = df_copy['market value ($)'] / total_value # Recalculate to remove rounding errors
+    df_copy = df_copy.sort_values(by=['weight (%)'], ascending=False).reset_index(drop=True)
     return df_copy
 
 def split_into_batches(full_list, batch_size):
@@ -166,14 +212,14 @@ def split_into_batches(full_list, batch_size):
 
 def add_totals(df):
     df_copy = df.copy()
-    if 'weight(%)_x' in df_copy.columns:
-        df_copy.loc['Total', 'weight(%)_x'] = df_copy['weight(%)_x'].sum()
-        df_copy.loc['Total', 'market value($)_x'] = df_copy['market value($)_x'].sum()
-        df_copy.loc['Total', 'weight(%)_y'] = df_copy['weight(%)_y'].sum()
-        df_copy.loc['Total', 'market value($)_y'] = df_copy['market value($)_y'].sum()
-    elif 'weight(%)' in df_copy.columns:
-        df_copy.loc['Total', 'weight(%)'] = df_copy['weight(%)'].sum()
-        df_copy.loc['Total', 'market value($)'] = df_copy['market value($)'].sum()
+    if 'weight (%)_x' in df_copy.columns:
+        df_copy.loc['Total', 'weight (%)_x'] = df_copy['weight (%)_x'].sum()
+        df_copy.loc['Total', 'market value ($)_x'] = df_copy['market value ($)_x'].sum()
+        df_copy.loc['Total', 'weight (%)_y'] = df_copy['weight (%)_y'].sum()
+        df_copy.loc['Total', 'market value ($)_y'] = df_copy['market value ($)_y'].sum()
+    elif 'weight (%)' in df_copy.columns:
+        df_copy.loc['Total', 'weight (%)'] = df_copy['weight (%)'].sum()
+        df_copy.loc['Total', 'market value ($)'] = df_copy['market value ($)'].sum()
     return df_copy
 
 def process_for_change_in_holdings(df1, df2, fund):
@@ -204,15 +250,15 @@ def process_for_change_in_holdings(df1, df2, fund):
                 merged.loc[index, 'shares_y'] /= merged.loc[index, 'split_factor']
                 merged.loc[index, 'share_price_y'] *= merged.loc[index, 'split_factor']
     merged['change_in_share_price'] = (merged['share_price_y'] - merged['share_price_x']) / merged['share_price_x']
-    merged['change_in_value'] = (merged['market value($)_y'] - merged['market value($)_x']) / merged['market value($)_x']
-    merged['change_in_weight'] = merged['weight(%)_y'] - merged['weight(%)_x']
-    merged['relative_change_in_weight'] = merged['change_in_weight'] / merged['weight(%)_x']
+    merged['change_in_value'] = (merged['market value ($)_y'] - merged['market value ($)_x']) / merged['market value ($)_x']
+    merged['change_in_weight'] = merged['weight (%)_y'] - merged['weight (%)_x']
+    merged['relative_change_in_weight'] = merged['change_in_weight'] / merged['weight (%)_x']
     merged['change_in_shares'] = merged['shares_y'] - merged['shares_x']
     merged['percent_change_in_shares'] = merged['change_in_shares'] / merged['shares_x']
     for index, row in merged.iterrows():
-        if pd.isna(row['weight(%)_x']):
+        if pd.isna(row['weight (%)_x']):
             merged.loc[index, 'sort_rank'] = 1000000
-        elif pd.isna(row['weight(%)_y']):
+        elif pd.isna(row['weight (%)_y']):
             merged.loc[index, 'sort_rank'] = -1000000
         else:
             merged.loc[index, 'sort_rank'] = merged.loc[index, 'percent_change_in_shares']
@@ -221,7 +267,7 @@ def process_for_change_in_holdings(df1, df2, fund):
     merged.rename(index={merged.index[-1]: 'Total'}, inplace=True) # Need to rename last row of index after resetting index
     if 'split_factor' in merged.columns:
         merged = merged.drop(['split_factor'], axis=1)
-    merged.loc['Total', 'change_in_value'] = (merged.loc['Total', 'market value($)_y'] - merged.loc['Total', 'market value($)_x']) / merged.loc['Total', 'market value($)_x']
+    merged.loc['Total', 'change_in_value'] = (merged.loc['Total', 'market value ($)_y'] - merged.loc['Total', 'market value ($)_x']) / merged.loc['Total', 'market value ($)_x']
     if start_date < switchover:
         start_previous_close = start_date
     else:
@@ -236,7 +282,7 @@ def process_for_change_in_holdings(df1, df2, fund):
         else:
             merged.loc['Total', 'change_in_share_price'] = 0
         merged.loc['Total', 'fund_inflow_outflow'] = merged.loc['Total', 'change_in_value'] - merged.loc['Total', 'change_in_share_price']
-    merged = merged.drop(['fund', 'cusip', 'sort_rank', 'change_in_shares', 'market value($)_x', 'market value($)_y', 'change_in_weight', 'relative_change_in_weight', 'shares_x', 'shares_y', 'share_price_x', 'share_price_y', 'company_y'], axis=1)
+    merged = merged.drop(['fund', 'cusip', 'sort_rank', 'change_in_shares', 'market value ($)_x', 'market value ($)_y', 'change_in_weight', 'relative_change_in_weight', 'shares_x', 'shares_y', 'share_price_x', 'share_price_y', 'company_y'], axis=1)
     return merged
 
 def negative_red_hide_empty(val):
@@ -278,8 +324,8 @@ def process_for_change_in_value(change_in_holdings_df):
     red.saturation = 0.9
     red.luminance = max_lum
     clamp_threshold = 0.2
-    change_in_value_df = change_in_holdings_df[['company_x', 'ticker', 'weight(%)_x', 'change_in_share_price', 'change_in_value']].drop(index='Total').copy()
-    change_in_value_df['contribution'] = change_in_value_df['weight(%)_x'] * change_in_value_df['change_in_share_price']
+    change_in_value_df = change_in_holdings_df[['company_x', 'ticker', 'weight (%)_x', 'change_in_share_price', 'change_in_value']].drop(index='Total').copy()
+    change_in_value_df['contribution'] = change_in_value_df['weight (%)_x'] * change_in_value_df['change_in_share_price']
     change_in_value_df['contribution_abs'] = abs(change_in_value_df['contribution'])
     for index, row in change_in_value_df.iterrows():
         change_in_share_price = row['change_in_share_price']
@@ -293,7 +339,7 @@ def process_for_change_in_value(change_in_holdings_df):
         change_in_value_df.loc[index, 'color'] = color.hex
     change_in_value_df = change_in_value_df.sort_values(by=['contribution'], ascending=False).reset_index(drop=True)
     change_in_value_df = change_in_value_df.reset_index(drop=True) # Sort all rows except last row (totals)
-    change_in_value_df.loc['Total', 'weight(%)_x'] = change_in_value_df['weight(%)_x'].sum()
+    change_in_value_df.loc['Total', 'weight (%)_x'] = change_in_value_df['weight (%)_x'].sum()
     change_in_value_df.loc['Total', 'contribution'] = change_in_value_df['contribution'].sum()
     change_in_value_df.loc['Total', 'change_in_value'] = change_in_holdings_df.loc['Total', 'change_in_value']
     change_in_value_df.loc['Total', 'change_in_share_price'] = change_in_holdings_df.loc['Total', 'change_in_share_price']
@@ -306,7 +352,7 @@ def batch_str_format(symbols):
     return ','.join(symbols)
 
 def process_for_sort_by_weight(df):
-    df_copy = df.sort_values(by=['weight(%)'], ascending=False)
+    df_copy = df.sort_values(by=['weight (%)'], ascending=False)
     df_copy = add_totals(df_copy)
     df_copy = df_copy.drop(['fund', 'date', 'cusip', 'share_price'], axis=1)
     return df_copy
@@ -319,7 +365,7 @@ def process_percent_ownership(df):
             df.loc[index, 'market_cap'] = all_stocks_info[ticker]['stats']['marketcap'] / 1000000000
             df.loc[index, 'shares_outstanding'] = all_stocks_info[ticker]['stats']['sharesOutstanding']
             df.loc[index, 'percent_ownership'] = df.loc[index, 'shares'] / df.loc[index, 'shares_outstanding']
-            df.loc[index, 'total_ownership_contribution'] = df.loc[index, 'weight(%)'] * df.loc[index, 'percent_ownership']
+            df.loc[index, 'total_ownership_contribution'] = df.loc[index, 'weight (%)'] * df.loc[index, 'percent_ownership']
             df.loc[index, 'pe_ratio'] = all_stocks_info[ticker]['stats']['peRatio']
     df.loc['Total', 'total_ownership_contribution'] = df['total_ownership_contribution'].sum()
     df.loc['Total', 'percent_ownership'] = df.loc['Total', 'total_ownership_contribution']
@@ -363,7 +409,7 @@ def process_unique_holdings(df):
     comparison_df = comparison_df[comparison_df['company'].notna()] # Only keep rows with company name (removes 'Total' row)
     for symbol in comparison_df.index:
         if pd.notna(symbol) and symbol not in arkk_comparison_df.index:
-            unique_holding_weight = comparison_df.loc[symbol, 'weight(%)']
+            unique_holding_weight = comparison_df.loc[symbol, 'weight (%)']
             unique_holdings += unique_holding_weight
             comparison_df.loc[symbol, 'unique_weight'] = unique_holding_weight
             comparison_df.loc[symbol, 'unique'] = True
@@ -389,7 +435,7 @@ def show_share_change_graph(fund):
             row = math.floor(i / columns)
             column = i % columns
             company = df.loc[symbol, 'company']
-            weight = df.loc[symbol, 'weight(%)']
+            weight = df.loc[symbol, 'weight (%)']
             share_changes_df = create_share_changes_df(fund, symbol).tail(days_to_display)
             title = f'{fund.upper()}: {company} ({symbol.upper()}), weight: {round(weight * 100, 2)}%'
             ax = fig.add_subplot(spec[row, column])
@@ -457,13 +503,13 @@ def plot_share_price_and_estimated_capital_flows(fund, start_date=None):
 
 # =====
 
-fund_holdings_path = base_dir / 'data/ark_fund_holdings'
-files = list(fund_holdings_path.glob('*.csv'))
+fund_holdings_csv_path = base_dir / 'data/ark_fund_holdings/csv'
+csv_files = list(fund_holdings_csv_path.glob('*.csv'))
 
 for fund in funds:
-    funds[fund]['files'] = sorted([path for path in files if fund in str(path)])
+    funds[fund]['csv_files'] = sorted([path for path in csv_files if fund in str(path)])
     funds[fund]['dfs'] = []
-    for file in funds[fund]['files']:
+    for file in funds[fund]['csv_files']:
         funds[fund]['dfs'].append(process_df(pd.read_csv(file)))
     companies_data = {'symbol': [], 'company': []}
     for index, row in funds[fund]['dfs'][-1].iterrows():
@@ -534,47 +580,48 @@ for symbol in all_stocks_info:
         }
 
 # Fund/stock breakdown
-    fund_holdings_data = {'symbol': [], 'company': [], 'category': []}
+fund_holdings_data = {'symbol': [], 'company': [], 'category': []}
+for fund in funds:
+    fund_holdings_data['count'] = []
+    fund_holdings_data[fund] = []
+for symbol in all_symbols:
+    fund_holdings_data['symbol'].append(symbol)
+    fund_holdings_data['company'].append(all_companies_df.loc[symbol, 'company'])
+    count = 0
     for fund in funds:
-        fund_holdings_data['count'] = []
-        fund_holdings_data[fund] = []
-    for symbol in all_symbols:
-        fund_holdings_data['symbol'].append(symbol)
-        fund_holdings_data['company'].append(all_companies_df.loc[symbol, 'company'])
-        count = 0
-        for fund in funds:
-            if symbol in funds[fund]['companies_df'].index:
-                fund_holdings_data[fund].append(fund)
-                count += 1
-            else:
-                fund_holdings_data[fund].append('')
-        fund_holdings_data['count'].append(count)
-        fund_holdings_data['category'].append('')
-    fund_holdings_df = pd.DataFrame.from_dict(fund_holdings_data, orient='columns').set_index('symbol').sort_values(by=['count', 'arkk', 'arkg', 'arkw', 'arkf', 'arkq', 'arkx'], ascending=False)
-    for stock in fund_holdings_df.index:
-        count = fund_holdings_df.loc[stock, 'count']
-        if fund_holdings_df.loc[stock, 'arkk'] != '':
-            count -= 1
-        if count == 1 and fund_holdings_df.loc[stock, 'arkf'] != '':
-            fund_holdings_df.loc[stock, 'category'] = 'finance'
-        elif count == 1 and fund_holdings_df.loc[stock, 'arkq'] != '':
-            fund_holdings_df.loc[stock, 'category'] = 'autonomy'
-        elif count == 1 and fund_holdings_df.loc[stock, 'arkg'] != '':
-            fund_holdings_df.loc[stock, 'category'] = 'biotech'
-        for label in category_labels:
-            if stock in category_labels[label]:
-                fund_holdings_df.loc[stock, 'category'] = label
-    # Replace all-caps company names with more readable versions
-    for symbol in fund_holdings_df.index:
-        if symbol in all_stocks_info and all_stocks_info[symbol]['stats'] is not None and all_stocks_info[symbol]['stats']['companyName']:
-            fund_holdings_df.loc[symbol, 'company'] = all_stocks_info[symbol]['stats']['companyName']
-    fund_holdings_df.index.names = ['Symbol']
-    fund_holdings = apply_style(fund_holdings_df.drop(['count'], axis=1))
-    # Used in separate back testing project
-    fund_holdings_csv_path = base_dir / 'output/ark_fund_holdings.csv'
-    os.makedirs(os.path.dirname(fund_holdings_csv_path), exist_ok=True)
-    fund_holdings_df.to_csv(fund_holdings_csv_path)
+        if symbol in funds[fund]['companies_df'].index:
+            fund_holdings_data[fund].append(fund)
+            count += 1
+        else:
+            fund_holdings_data[fund].append('')
+    fund_holdings_data['count'].append(count)
+    fund_holdings_data['category'].append('')
+fund_holdings_df = pd.DataFrame.from_dict(fund_holdings_data, orient='columns').set_index('symbol').sort_values(by=['count', 'arkk', 'arkg', 'arkw', 'arkf', 'arkq', 'arkx'], ascending=False)
+for stock in fund_holdings_df.index:
+    count = fund_holdings_df.loc[stock, 'count']
+    if fund_holdings_df.loc[stock, 'arkk'] != '':
+        count -= 1
+    if count == 1 and fund_holdings_df.loc[stock, 'arkf'] != '':
+        fund_holdings_df.loc[stock, 'category'] = 'finance'
+    elif count == 1 and fund_holdings_df.loc[stock, 'arkq'] != '':
+        fund_holdings_df.loc[stock, 'category'] = 'autonomy'
+    elif count == 1 and fund_holdings_df.loc[stock, 'arkg'] != '':
+        fund_holdings_df.loc[stock, 'category'] = 'biotech'
+    for label in category_labels:
+        if stock in category_labels[label]:
+            fund_holdings_df.loc[stock, 'category'] = label
+# Replace all-caps company names with more readable versions
+for symbol in fund_holdings_df.index:
+    if symbol in all_stocks_info and all_stocks_info[symbol]['stats'] is not None and all_stocks_info[symbol]['stats']['companyName']:
+        fund_holdings_df.loc[symbol, 'company'] = all_stocks_info[symbol]['stats']['companyName']
+fund_holdings_df.index.names = ['Symbol']
+fund_holdings = apply_style(fund_holdings_df.drop(['count'], axis=1))
+# Used in separate back testing project
+fund_holdings_csv_path = base_dir / 'output/ark_fund_holdings.csv'
+os.makedirs(os.path.dirname(fund_holdings_csv_path), exist_ok=True)
+fund_holdings_df.to_csv(fund_holdings_csv_path)
 
+# Holdings by weight
 for fund in funds:
     funds[fund]['holdings_by_weight_df'] = process_for_sort_by_weight(funds[fund]['dfs'][-1])
     if fund != 'arkk':
@@ -628,4 +675,3 @@ for fund in funds:
         nearest_date = nearest(funds[fund]['dates_from_data'], one_year_back)
         index = funds[fund]['dates_from_data'].index(nearest_date)
         funds[fund]['change_in_holdings_past_year'] = apply_style(process_for_change_in_holdings(funds[fund]['dfs'][index], funds[fund]['dfs'][-1], fund))
-# arkk_change_in_holdings_oldest_newest = apply_style(process_for_change_in_holdings(funds['arkk']['dfs'][0], funds['arkk']['dfs'][-1], fund))

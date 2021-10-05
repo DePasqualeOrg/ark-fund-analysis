@@ -9,3 +9,6 @@ ipython
 python_dateutil
 matplotlib
 beautifulsoup4
+tabula
+camelot
+pdfplumber
