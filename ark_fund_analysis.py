@@ -2,25 +2,21 @@ import pandas as pd
 import os
 import requests
 from requests.adapters import HTTPAdapter
-
 from datetime import datetime
 from dateutil import tz
 from dateutil.relativedelta import relativedelta
-
 # from trading_calendars import get_calendar # Now unmaintained (https://github.com/quantopian/trading_calendars)
 # from pandas_market_calendars import get_calendar # Alternative calendar library, lacks some functionality (https://github.com/rsheftel/pandas_market_calendars)
 from exchange_calendars import get_calendar # New maintained fork of trading_calendars (https://github.com/gerrymanoim/exchange_calendars)
-
 import json
 import math
 from pathlib import Path
 from colour import Color
-
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-
 import tabula
 import camelot
+import re
 
 base_dir = Path(__file__).parent.absolute()
 
@@ -131,17 +127,27 @@ category_labels = {
 
 symbols_with_spaces = []
 
-def process_df(df):
-    df_copy = df.copy()
-    df_date = pd.to_datetime(df_copy['date'][0], format='%m/%d/%Y').date()
-    df_fund = df_copy['fund'][0].lower()
+def map_csv_to_df(csv_file):
+    fund_re = re.compile(r'.+?(?=_)') # Matches text before the first underscore
+    fund = fund_re.match(csv_file.stem).group()
+    if csv_file.stem in funds[fund]['dfs']:
+        return funds[fund]['dfs'][csv_file.stem]
+    else:
+        df = csv_to_df(csv_file)
+        funds[fund]['dfs'][csv_file.stem] = df.copy()
+        return funds[fund]['dfs'][csv_file.stem]
+
+def csv_to_df(csv_file):
+    df = pd.read_csv(csv_file)
+    df_date = pd.to_datetime(df['date'][0], format='%m/%d/%Y').date()
+    df_fund = df['fund'][0].lower()
     # Add `shares` column from PDF if necessary (share counts not included in CSV files for 4 and 5 October 2021)
-    if 'shares' not in df_copy.columns:
+    if 'shares' not in df.columns:
         # Check for cached CSV with `shares` column from PDF
         combined_csv_path = base_dir / 'data/ark_fund_holdings/csv_with_shares' / df_date.strftime(f'{df_fund}_%Y_%m_%d.csv')
         if os.path.isfile(combined_csv_path):
             # Use existing file
-            df_copy = pd.read_csv(combined_csv_path)
+            df = pd.read_csv(combined_csv_path)
         else:
             # Process PDF and use share count from PDF
             pdf_path = base_dir / 'data/ark_fund_holdings/pdf' / df_date.strftime(f'{df_fund}_%Y_%m_%d.pdf')
@@ -160,49 +166,49 @@ def process_df(df):
                 # Convert `Shares` column to integers
                 full_df['shares'] = full_df['shares'].apply(lambda x: pd.to_numeric(x.replace(',', '')))
                 partial_df = full_df[['cusip', 'shares']].copy()
-                df_copy = pd.merge(df_copy, partial_df, on=['cusip'], how='outer')
+                df = pd.merge(df, partial_df, on=['cusip'], how='outer')
                 # Save cached copy of CSV file with shares column from PDF
-                df_copy.to_csv(combined_csv_path)
+                df.to_csv(combined_csv_path)
     # Rename columns if necessary (naming in CSV files changed on 4 October 2021)
-    if 'market value($)' in df_copy.columns:
-        df_copy.rename(columns={'market value($)': 'market value ($)'}, inplace=True)
-    if 'weight(%)' in df_copy.columns:
-        df_copy.rename(columns={'weight(%)': 'weight (%)'}, inplace=True)
+    if 'market value($)' in df.columns:
+        df.rename(columns={'market value($)': 'market value ($)'}, inplace=True)
+    if 'weight(%)' in df.columns:
+        df.rename(columns={'weight(%)': 'weight (%)'}, inplace=True)
     # Use lowercase symbols in code and uppercase for display
-    for index, row in df_copy.iterrows():
-        if not pd.isnull(df_copy.loc[index, 'ticker']):
+    for index, row in df.iterrows():
+        if not pd.isnull(df.loc[index, 'ticker']):
             # Remove endings and whitespace from symbols
-            df_copy.loc[index, 'ticker'] = df_copy.loc[index, 'ticker'].strip().lower() # Remove trailing and leading whitespace from symbols, and make lowercase
+            df.loc[index, 'ticker'] = df.loc[index, 'ticker'].strip().lower() # Remove trailing and leading whitespace from symbols, and make lowercase
             for ending in [' uw', ' uq', ' un', ' u']:
-                if df_copy.loc[index, 'ticker'].endswith(ending):
-                    df_copy.loc[index, 'ticker'] = df_copy.loc[index, 'ticker'].rstrip(ending) # Remove ending from end of string
+                if df.loc[index, 'ticker'].endswith(ending):
+                    df.loc[index, 'ticker'] = df.loc[index, 'ticker'].rstrip(ending) # Remove ending from end of string
             # Custom fixes
-            if df_copy.loc[index, 'ticker'] == 'dsy' and df_copy.loc[index, 'company'] == 'DISCOVERY LTD':
-                df_copy.loc[index, 'ticker'] = 'dsy.jo' # Disambiguate Dassault Systems and Discovery Limited (ARK's data uses same symbol DSY for both)
-            if df_copy.loc[index, 'ticker'] == 'tcs li':
-                df_copy.loc[index, 'ticker'] = 'tcs.li'
-            if df_copy.loc[index, 'ticker'] == 'dsy fp':
-                df_copy.loc[index, 'ticker'] = 'dsy.fp'
+            if df.loc[index, 'ticker'] == 'dsy' and df.loc[index, 'company'] == 'DISCOVERY LTD':
+                df.loc[index, 'ticker'] = 'dsy.jo' # Disambiguate Dassault Systems and Discovery Limited (ARK's data uses same symbol DSY for both)
+            if df.loc[index, 'ticker'] == 'tcs li':
+                df.loc[index, 'ticker'] = 'tcs.li'
+            if df.loc[index, 'ticker'] == 'dsy fp':
+                df.loc[index, 'ticker'] = 'dsy.fp'
             # Check for other cases not yet accounted for
-            if ' ' in df_copy.loc[index, 'ticker']:
-                symbols_with_spaces.append(df_copy.loc[index, 'ticker'])
+            if ' ' in df.loc[index, 'ticker']:
+                symbols_with_spaces.append(df.loc[index, 'ticker'])
     # Aggregate multiple rows with same asset (e.g. Japanese yen)
     aggregate_functions = {'date': 'first', 'fund': 'first', 'company': 'first', 'ticker': 'first', 'cusip': 'first', 'shares': 'sum', 'market value ($)': 'sum', 'weight (%)': 'sum'}
-    df_copy = df_copy.groupby(df_copy['cusip'], as_index=False).aggregate(aggregate_functions).sort_values(by=['weight (%)'], ascending=False).reset_index(drop=True)
-    df_copy.dropna(subset=['fund'], inplace=True)
-    df_copy['date'] = pd.to_datetime(df_copy['date'], format='%m/%d/%Y').dt.date # Convert to datetime object and display only date without time
+    df = df.groupby(df['cusip'], as_index=False).aggregate(aggregate_functions).sort_values(by=['weight (%)'], ascending=False).reset_index(drop=True)
+    df.dropna(subset=['fund'], inplace=True)
+    df['date'] = pd.to_datetime(df['date'], format='%m/%d/%Y').dt.date # Convert to datetime object and display only date without time
     # Some columns are formatted as strings in the CSV files starting on 4 October 2021. These need to be converted to floats.
-    if 'shares' in df_copy and df_copy['shares'].dtype == object and isinstance(df_copy.iloc[0]['shares'], str):
-        df_copy['shares'] = df_copy['shares'].apply(lambda x: pd.to_numeric(x.replace(',', '')))
-    if df_copy['market value ($)'].dtype == object and isinstance(df_copy.iloc[0]['market value ($)'], str):
-        df_copy['market value ($)'] = df_copy['market value ($)'].apply(lambda x: pd.to_numeric(x.replace(',', '').replace('$', '')))
-    if df_copy['weight (%)'].dtype == object and isinstance(df_copy.iloc[0]['weight (%)'], str):
-        df_copy['weight (%)'] = df_copy['weight (%)'].apply(lambda x: pd.to_numeric(x.replace('%', '')))
-    total_value = df_copy['market value ($)'].sum()
-    df_copy['share_price'] = df_copy['market value ($)'] / df_copy['shares']
-    df_copy['weight (%)'] = df_copy['market value ($)'] / total_value # Recalculate to remove rounding errors
-    df_copy = df_copy.sort_values(by=['weight (%)'], ascending=False).reset_index(drop=True)
-    return df_copy
+    if 'shares' in df and df['shares'].dtype == object and isinstance(df.iloc[0]['shares'], str):
+        df['shares'] = df['shares'].apply(lambda x: pd.to_numeric(x.replace(',', '')))
+    if df['market value ($)'].dtype == object and isinstance(df.iloc[0]['market value ($)'], str):
+        df['market value ($)'] = df['market value ($)'].apply(lambda x: pd.to_numeric(x.replace(',', '').replace('$', '')))
+    if df['weight (%)'].dtype == object and isinstance(df.iloc[0]['weight (%)'], str):
+        df['weight (%)'] = df['weight (%)'].apply(lambda x: pd.to_numeric(x.replace('%', '')))
+    total_value = df['market value ($)'].sum()
+    df['share_price'] = df['market value ($)'] / df['shares']
+    df['weight (%)'] = df['market value ($)'] / total_value # Recalculate to remove rounding errors
+    df = df.sort_values(by=['weight (%)'], ascending=False).reset_index(drop=True)
+    return df
 
 def split_into_batches(full_list, batch_size):
     batches = []
@@ -372,11 +378,12 @@ def process_percent_ownership(df):
     df = df.drop(['shares_outstanding', 'total_ownership_contribution'], axis=1)
     return df
 
-def create_share_changes_df(fund, symbol):
+def create_share_changes_df(fund, symbol, n):
     previous_n_shares = None
     df_data = {'date': [], 'shares': [], 'perc_shares_change': [], 'n_shares_change': []}
-    for i, df in enumerate(funds[fund]['dfs']):
-        df = df.set_index('ticker')
+    csv_subset = funds[fund]['csv_files'][-n:-1]
+    for i, csv_file in enumerate(csv_subset):
+        df = map_csv_to_df(csv_subset[i]).set_index('ticker')
         if symbol in df.index:
             df_data['date'].append(df.loc[symbol, 'date'])
             df_data['shares'].append(df.loc[symbol, 'shares'])
@@ -423,7 +430,7 @@ def process_unique_holdings(df):
 def show_share_change_graph(fund):
     columns = 3
     days_to_display = 40
-    if len(funds[fund]['dfs']) >= 2:
+    if len(funds[fund]['csv_files']) >= 2:
         # !! Should also include symbols not in latest holdings_by_weight_df (create same df for 40 sessions ago)
         symbols = [symbol for symbol in funds[fund]['holdings_by_weight_df']['ticker'] if symbol != '']
         rows = math.ceil(len(symbols) / columns)
@@ -436,7 +443,7 @@ def show_share_change_graph(fund):
             column = i % columns
             company = df.loc[symbol, 'company']
             weight = df.loc[symbol, 'weight (%)']
-            share_changes_df = create_share_changes_df(fund, symbol).tail(days_to_display)
+            share_changes_df = create_share_changes_df(fund, symbol, days_to_display)
             title = f'{fund.upper()}: {company} ({symbol.upper()}), weight: {round(weight * 100, 2)}%'
             ax = fig.add_subplot(spec[row, column])
             share_changes_df.plot(kind='bar', width=0.9, ax=ax, y='n_shares_change', title=title, legend=False).xaxis.label.set_visible(False)
@@ -446,7 +453,21 @@ def show_share_change_graph(fund):
             ax.ticklabel_format(scilimits=(0, 0), axis='y') # Always use scientific notation on y axis (more compact)
         plt.show()
 
+def csv_path_to_date(csv_path):
+    stem = csv_path.stem # Filename without parent directory or extension
+    fund_re = re.compile(r'.+?(?=_)') # Matches text before the first underscore
+    fund = fund_re.match(csv_path.stem).group()
+    stripped = stem.replace(f'{fund}_', '')
+    date = datetime.strptime(stripped, '%Y_%m_%d').date()
+    return date
+
 def plot_share_price_and_estimated_capital_flows(fund, start_date=None):
+    cached_data_path = base_dir / f'output/{fund}_share_price_and_estimated_capital_flows.csv'
+    if os.path.isfile(cached_data_path):
+        cached_df = pd.read_csv(cached_data_path)
+        cached_df['date'] = pd.to_datetime(cached_df['date'], format='%Y-%m-%d').dt.date # Convert to datetime object and display only date without time
+    else:
+        cached_df = None
     change_in_holdings_dfs = []
     change_in_value_dfs = []
     data = {
@@ -458,34 +479,40 @@ def plot_share_price_and_estimated_capital_flows(fund, start_date=None):
         'share_price_cumulative': [],
         'estimated_capital_flows_cumulative': [],
     }
-    for i, df in enumerate(funds[fund]['dfs']):
-        if start_date is None:
-            start_date = funds[fund]['earliest_date_from_data']
-        if df['date'].dropna().iloc[0] >= start_date:
-            if i == 0:
-                data['date'].append(df['date'].dropna().iloc[0])
-                data['change_in_share_price'].append(None)
-                data['change_in_value'].append(None)
-                data['estimated_change_in_share_price'].append(None)
-                data['estimated_capital_flows'].append(None)
-            elif i > 0 and i < len(funds[fund]['dfs']):
-                change_in_holdings_df = process_for_change_in_holdings(funds[fund]['dfs'][i - 1], funds[fund]['dfs'][i], fund)
-                change_in_holdings_dfs.append(change_in_holdings_df)
-                change_in_value_df = process_for_change_in_value(change_in_holdings_df)
-                change_in_value_dfs.append(change_in_value_df)
-                # Data for new dataframe
-                data['date'].append(change_in_holdings_df['date_y'].dropna().iloc[0])
-                data['change_in_share_price'].append(change_in_holdings_df.loc['Total', 'change_in_share_price'])
-                data['change_in_value'].append(change_in_value_df.loc['Total', 'change_in_value'])
-                data['estimated_change_in_share_price'].append(change_in_value_df.loc['Total', 'contribution'])
-                if 'fund_inflow_outflow' in change_in_holdings_df:
-                    data['estimated_capital_flows'].append(change_in_holdings_df.loc['Total', 'fund_inflow_outflow'])
-                else:
+    for i, csv_file in enumerate(funds[fund]['csv_files']):
+        if (cached_df is None or csv_path_to_date(csv_file) not in cached_df['date'].values) and (start_date is None or csv_path_to_date(csv_file) >= start_date):
+            df = map_csv_to_df(csv_file)
+            if start_date is None:
+                start_date = funds[fund]['earliest_date_from_data']
+            if df['date'].dropna().iloc[0] >= start_date:
+                if i == 0:
+                    data['date'].append(df['date'].dropna().iloc[0])
+                    data['change_in_share_price'].append(None)
+                    data['change_in_value'].append(None)
+                    data['estimated_change_in_share_price'].append(None)
                     data['estimated_capital_flows'].append(None)
+                elif i > 0 and i < len(funds[fund]['csv_files']):
+                    change_in_holdings_df = process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][i - 1]), map_csv_to_df(funds[fund]['csv_files'][i]), fund)
+                    change_in_holdings_dfs.append(change_in_holdings_df)
+                    change_in_value_df = process_for_change_in_value(change_in_holdings_df)
+                    change_in_value_dfs.append(change_in_value_df)
+                    # Data for new dataframe
+                    data['date'].append(change_in_holdings_df['date_y'].dropna().iloc[0])
+                    data['change_in_share_price'].append(change_in_holdings_df.loc['Total', 'change_in_share_price'])
+                    data['change_in_value'].append(change_in_value_df.loc['Total', 'change_in_value'])
+                    data['estimated_change_in_share_price'].append(change_in_value_df.loc['Total', 'contribution'])
+                    if 'fund_inflow_outflow' in change_in_holdings_df:
+                        data['estimated_capital_flows'].append(change_in_holdings_df.loc['Total', 'fund_inflow_outflow'])
+                    else:
+                        data['estimated_capital_flows'].append(None)
     for i, item in enumerate(data['change_in_share_price']):
         if i == 0:
-            data['share_price_cumulative'].append(1)
-            data['estimated_capital_flows_cumulative'].append(1)
+            if cached_df is None:
+                data['share_price_cumulative'].append(1)
+                data['estimated_capital_flows_cumulative'].append(1)
+            else:
+                data['share_price_cumulative'].append(cached_df['share_price_cumulative'].iloc[-1] * (1 + data['change_in_share_price'][i]))
+                data['estimated_capital_flows_cumulative'].append(cached_df['estimated_capital_flows_cumulative'].iloc[-1] * (1 + data['estimated_capital_flows'][i]))
         else:
             data['share_price_cumulative'].append(data['share_price_cumulative'][i - 1] * (1 + data['change_in_share_price'][i]))
             if pd.notna(data['estimated_capital_flows'][i]):
@@ -494,9 +521,13 @@ def plot_share_price_and_estimated_capital_flows(fund, start_date=None):
                 data['estimated_capital_flows_cumulative'].append(data['estimated_capital_flows_cumulative'][i - 1])
     df = pd.DataFrame.from_dict(data)
     df['difference'] = df['change_in_share_price'] - df['estimated_change_in_share_price']
-    df = df.set_index('date')
+    if cached_df is not None:
+        df = pd.concat([cached_df, df])
     # df[['difference']].plot.line(y='difference', figsize=(20, 5)) # Check if estimated change in share price based on data is within ordinary margin of error
     funds[fund]['estimated_capital_flows_and_share_price_df'] = df.copy()
+    df.to_csv(cached_data_path, index=False) # Cache as CSV
+    df.set_index('date', drop=True, inplace=True)
+    df.index.names = ['']
     df[['share_price_cumulative', 'estimated_capital_flows_cumulative']].rename(columns={'share_price_cumulative': 'Share price', 'estimated_capital_flows_cumulative': 'Estimated capital flows'}).plot.line(title=f'{fund.upper()}', figsize=(20, 5))
     plt.legend(loc='upper left')
     plt.show()
@@ -508,15 +539,14 @@ csv_files = list(fund_holdings_csv_path.glob('*.csv'))
 
 for fund in funds:
     funds[fund]['csv_files'] = sorted([path for path in csv_files if fund in str(path)])
-    funds[fund]['dfs'] = []
-    for file in funds[fund]['csv_files']:
-        funds[fund]['dfs'].append(process_df(pd.read_csv(file)))
+    funds[fund]['dfs'] = {}
     companies_data = {'symbol': [], 'company': []}
-    for index, row in funds[fund]['dfs'][-1].iterrows():
-        ticker = funds[fund]['dfs'][-1].loc[index, 'ticker']
+    latest_df = map_csv_to_df(funds[fund]['csv_files'][-1])
+    for index, row in latest_df.iterrows():
+        ticker = latest_df.loc[index, 'ticker']
         if not pd.isna(ticker):
             companies_data['symbol'].append(ticker)
-            companies_data['company'].append(funds[fund]['dfs'][-1].loc[index, 'company'])
+            companies_data['company'].append(latest_df.loc[index, 'company'])
     funds[fund]['companies_df'] = pd.DataFrame.from_dict(companies_data, orient='columns').set_index('symbol')
     funds[fund]['daily_price_df'] = pd.read_csv(base_dir / f'data/ark_fund_daily_price_data/{fund}.csv').set_index('timestamp')
     funds[fund]['daily_price_df'].index = pd.to_datetime(funds[fund]['daily_price_df'].index, format='%Y-%m-%d').date # Convert to datetime object and display only date without time
@@ -623,7 +653,8 @@ fund_holdings_df.to_csv(fund_holdings_csv_path)
 
 # Holdings by weight
 for fund in funds:
-    funds[fund]['holdings_by_weight_df'] = process_for_sort_by_weight(funds[fund]['dfs'][-1])
+    latest_df = map_csv_to_df(funds[fund]['csv_files'][-1])
+    funds[fund]['holdings_by_weight_df'] = process_for_sort_by_weight(latest_df)
     if fund != 'arkk':
         funds[fund]['holdings_by_weight_df'] = process_unique_holdings(funds[fund]['holdings_by_weight_df'])
     funds[fund]['holdings_by_weight_df'] = process_percent_ownership(funds[fund]['holdings_by_weight_df'])
@@ -631,7 +662,7 @@ for fund in funds:
 
 # Change in holdings and change in value
 for fund in funds:
-    funds[fund]['dates_from_data'] = [df.loc[0, 'date'] for df in funds[fund]['dfs']]
+    funds[fund]['dates_from_data'] = [csv_path_to_date(csv_path) for csv_path in funds[fund]['csv_files']]
     funds[fund]['earliest_date_from_data'] = min(funds[fund]['dates_from_data'])
     funds[fund]['latest_date_from_data'] = max(funds[fund]['dates_from_data'])
     # Format date for indexing in `us_calendar.sessions_in_range`
@@ -639,9 +670,10 @@ for fund in funds:
     funds[fund]['missing_dates'] = [session for session in funds[fund]['dates_from_calendar'] if session not in funds[fund]['dates_from_data']]
     if len(funds[fund]['missing_dates']) > 0:
         print(f"{fund.upper()} holdings data is missing for the following dates: {funds[fund]['missing_dates']}")
+    latest_df = map_csv_to_df(funds[fund]['csv_files'][-1])
     # Past two sessions
-    if len(funds[fund]['dfs']) >= 2:
-        funds[fund]['change_in_holdings_past_two_sessions_df'] = process_for_change_in_holdings(funds[fund]['dfs'][-2], funds[fund]['dfs'][-1], fund)
+    if len(funds[fund]['csv_files']) >= 2:
+        funds[fund]['change_in_holdings_past_two_sessions_df'] = process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][-2]), latest_df, fund)
         funds[fund]['change_in_value_past_two_sessions_df'] = process_for_change_in_value(funds[fund]['change_in_holdings_past_two_sessions_df'])
         funds[fund]['change_in_holdings_past_two_sessions'] = apply_style(funds[fund]['change_in_holdings_past_two_sessions_df'])
         funds[fund]['change_in_value_past_two_sessions'] = apply_style(funds[fund]['change_in_value_past_two_sessions_df'].drop(columns=['contribution_abs', 'color']))
@@ -650,28 +682,28 @@ for fund in funds:
     if funds[fund]['earliest_date_from_data'] <= one_week_back:
         nearest_date = nearest(funds[fund]['dates_from_data'], one_week_back)
         index = funds[fund]['dates_from_data'].index(nearest_date)
-        funds[fund]['change_in_holdings_past_week'] = apply_style(process_for_change_in_holdings(funds[fund]['dfs'][index], funds[fund]['dfs'][-1], fund))
+        funds[fund]['change_in_holdings_past_week'] = apply_style(process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][index]), latest_df, fund))
     # Past month
     one_month_back = funds[fund]['latest_date_from_data'] - relativedelta(months=1)
     if funds[fund]['earliest_date_from_data'] <= one_month_back:
         nearest_date = nearest(funds[fund]['dates_from_data'], one_month_back)
         index = funds[fund]['dates_from_data'].index(nearest_date)
-        funds[fund]['change_in_holdings_past_month'] = apply_style(process_for_change_in_holdings(funds[fund]['dfs'][index], funds[fund]['dfs'][-1], fund))
+        funds[fund]['change_in_holdings_past_month'] = apply_style(process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][index]), latest_df, fund))
     # Past quarter
     one_quarter_back = funds[fund]['latest_date_from_data'] - relativedelta(months=3)
     if funds[fund]['earliest_date_from_data'] <= one_quarter_back:
         nearest_date = nearest(funds[fund]['dates_from_data'], one_quarter_back)
         index = funds[fund]['dates_from_data'].index(nearest_date)
-        funds[fund]['change_in_holdings_past_quarter'] = apply_style(process_for_change_in_holdings(funds[fund]['dfs'][index], funds[fund]['dfs'][-1], fund))
+        funds[fund]['change_in_holdings_past_quarter'] = apply_style(process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][index]), latest_df, fund))
     # Past half year
     half_year_back = funds[fund]['latest_date_from_data'] - relativedelta(months=6)
     if funds[fund]['earliest_date_from_data'] <= half_year_back:
         nearest_date = nearest(funds[fund]['dates_from_data'], half_year_back)
         index = funds[fund]['dates_from_data'].index(nearest_date)
-        funds[fund]['change_in_holdings_past_half_year'] = apply_style(process_for_change_in_holdings(funds[fund]['dfs'][index], funds[fund]['dfs'][-1], fund))
+        funds[fund]['change_in_holdings_past_half_year'] = apply_style(process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][index]), latest_df, fund))
     # Past year
     one_year_back = funds[fund]['latest_date_from_data'] - relativedelta(years=1)
     if funds[fund]['earliest_date_from_data'] <= one_year_back:
         nearest_date = nearest(funds[fund]['dates_from_data'], one_year_back)
         index = funds[fund]['dates_from_data'].index(nearest_date)
-        funds[fund]['change_in_holdings_past_year'] = apply_style(process_for_change_in_holdings(funds[fund]['dfs'][index], funds[fund]['dfs'][-1], fund))
+        funds[fund]['change_in_holdings_past_year'] = apply_style(process_for_change_in_holdings(map_csv_to_df(funds[fund]['csv_files'][index]), latest_df, fund))
