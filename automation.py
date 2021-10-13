@@ -5,7 +5,6 @@ from pathlib import Path
 import json
 from bs4 import BeautifulSoup
 from time import gmtime, strftime
-
 import pandas as pd
 import io
 import cfscrape
@@ -14,10 +13,8 @@ from requests.adapters import HTTPAdapter
 import os
 from datetime import datetime, timedelta
 import pytz
-
 import pdfplumber
 import re
-
 # from trading_calendars import get_calendar # Now unmaintained (https://github.com/quantopian/trading_calendars)
 # from pandas_market_calendars import get_calendar # Alternative calendar library (https://github.com/rsheftel/pandas_market_calendars)
 from exchange_calendars import get_calendar # New maintained fork of trading_calendars (https://github.com/gerrymanoim/exchange_calendars)
@@ -140,7 +137,7 @@ def download_fund_holdings_data():
                 print(f'Saved {symbol.upper()} holdings PDF is up to date')
         else:
             print(f'Saved {symbol.upper()} holdings PDF is up to date')
-    return max(latest_saved_csv_dates)
+    return min(latest_saved_csv_dates) # Return minimum to check that latest data for all funds has been downloaded
 
 def export_notebook():
     # subprocess.call(f'{config["jupyter_path"]} nbconvert --to notebook --execute {notebook_path_escaped} --output output.ipynb', shell=True)
