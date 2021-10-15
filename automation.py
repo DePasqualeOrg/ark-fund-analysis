@@ -145,7 +145,7 @@ def export_notebook():
     # subprocess.call(f'{config["jupyter_path"]} nbconvert --to html --execute {notebook_path_escaped} --no-input --no-prompt --output {f"notebook_filestem"}.html', shell=True)
     try:
         start_time = time.time()
-        subprocess.run(f'{config["jupyter_path"]} nbconvert --to html --execute {notebook_path_escaped} --no-input --no-prompt --output output/{notebook_filestem}.html --ExecutePreprocessor.timeout=840', shell=True, check=True)
+        subprocess.run(f'{config["jupyter_path"]} nbconvert --to html --execute {notebook_path_escaped} --no-input --no-prompt --output output/{notebook_filestem}.html --ExecutePreprocessor.timeout=600', shell=True, check=True)
         # Replace title of HTML document
         with open(base_dir / f'output/{notebook_filestem}.html') as file:
             soup = BeautifulSoup(file, 'html.parser')
