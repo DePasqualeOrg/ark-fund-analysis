@@ -3,7 +3,7 @@ import os
 import requests
 from requests.adapters import HTTPAdapter
 from datetime import datetime
-from dateutil import tz
+import pytz
 from dateutil.relativedelta import relativedelta
 # from trading_calendars import get_calendar # Now unmaintained (https://github.com/quantopian/trading_calendars)
 # from pandas_market_calendars import get_calendar # Alternative calendar library, lacks some functionality (https://github.com/rsheftel/pandas_market_calendars)
@@ -20,9 +20,9 @@ import re
 
 base_dir = Path(__file__).parent.absolute()
 
-utc = tz.tzutc()
+utc = pytz.UTC
 now_utc = datetime.utcnow().replace(tzinfo=utc) # Add time zone
-timestamp_now = pd.Timestamp(now_utc)
+timestamp_now = pd.Timestamp(now_utc).replace(second=0, microsecond=0) # Seconds and microseconds must be 0 for exchange_calendars library
 us_calendar = get_calendar('XNYS')
 previous_close = us_calendar.previous_close(timestamp_now)
 time_format = '%Y-%m-%d %H:%M:%S %z'

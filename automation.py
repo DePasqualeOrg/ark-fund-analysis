@@ -48,7 +48,7 @@ def download_fund_holdings_data():
     now_est = datetime.now(est)
     # US stock exchanges (includes NASDAQ)
     us_calendar = get_calendar('XNYS')
-    timestamp_now = pd.Timestamp(now_utc)
+    timestamp_now = pd.Timestamp(now_utc).replace(second=0, microsecond=0) # Seconds and microseconds must be 0 for exchange_calendars library
     previous_close = us_calendar.previous_close(timestamp_now)
     next_close = us_calendar.next_close(timestamp_now)
     time_format = '%Y-%m-%d %H:%M:%S %z'
@@ -70,7 +70,7 @@ def download_fund_holdings_data():
     print('Previous close:              ' + str(previous_close.astimezone(utc).strftime(time_format)))
     print('Next close:                  ' + str(next_close.astimezone(utc).strftime(time_format)))
     two_weeks_ago = now_utc - timedelta(days=14)
-    prev_two_weeks_sessions = us_calendar.sessions_in_range(two_weeks_ago, now_utc)
+    prev_two_weeks_sessions = us_calendar.sessions_in_range(two_weeks_ago.date(), now_utc.date())
     latest_session = max(prev_two_weeks_sessions)
     print(f'Latest session date:         {latest_session.date()}')
     latest_saved_csv_dates = []
@@ -189,7 +189,7 @@ def download_fund_daily_price_data():
     utc = pytz.utc
     us_calendar = get_calendar('XNYS')
     now_utc = datetime.utcnow().replace(tzinfo=utc) # Add time zone
-    timestamp_now_utc = pd.Timestamp(now_utc)
+    timestamp_now_utc = pd.Timestamp(now_utc).replace(second=0, microsecond=0) # Seconds and microseconds must be 0 for exchange_calendars library
     previous_close = us_calendar.previous_close(timestamp_now_utc) # UTC
     # Alphavantage free tier rate limit: 5 requests per minute, 500 requests per day
     requests_per_minute = 5
