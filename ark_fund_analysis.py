@@ -403,9 +403,10 @@ def create_share_changes_df(fund, symbol, n):
             df_data['n_shares_change'].append(n_shares_change)
         else:
             df_data['date'].append(df.iloc[0]['date'])
-            df_data['shares'].append(None)
-            df_data['perc_shares_change'].append(None)
-            df_data['n_shares_change'].append(None)
+            # !! Using 0 rather than None in the next three lines produces some warnings, but using None produces an error. Fix later.
+            df_data['shares'].append(0)
+            df_data['perc_shares_change'].append(0)
+            df_data['n_shares_change'].append(0)
     stock_purchases_df = pd.DataFrame.from_dict(df_data, orient='columns').set_index('date')
     return stock_purchases_df
 
