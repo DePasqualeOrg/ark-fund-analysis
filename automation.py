@@ -106,35 +106,40 @@ def download_fund_holdings_data():
             # Download PDF
             data = {'action': 'generate_fund_holdings_pdf', 'pid': fund_pids[symbol]}
             response = ark_session.post(url='https://ark-funds.com/wp-admin/admin-ajax.php', data=data)
-            response_content = response.json()
-            if response_content['success'] is True:
-                download_url = response_content['file']
-                pdf_response = ark_session.get(download_url)
-                pdf_bytes = pdf_response.content
+            if response.ok: # True if `response.status_code` is less than 400
+                response_content = response.json()
+                if response_content['success'] is True:
+                    download_url = response_content['file']
+                    pdf_response = ark_session.get(download_url)
+                    pdf_bytes = pdf_response.content
+                else:
+                    raise Exception(f'Request for {symbol.upper()} holdings PDF URL failed')
+                # Extract text from PDF
+                with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    texts = [page.extract_text() for page in pdf.pages]
+                    full_text = ''
+                    for text in texts:
+                        full_text += text
+                # Use regex to find date in PDF
+                date_re = re.compile(r'\d{2}\/\d{2}\/\d{4}')
+                matches = date_re.findall(full_text)
+                pdf_date_text = matches[0]
+                downloaded_pdf_date = est.localize(pd.to_datetime(pdf_date_text, format='%m/%d/%Y'))
+                print(f'Downloaded {symbol.upper()} holdings PDF date:   {str(downloaded_pdf_date.date())}')
+                # Save
+                if latest_saved_pdf_date is None or latest_saved_pdf_date < downloaded_pdf_date:
+                    print(f'Saving downloaded {symbol.upper()} holdings PDF')
+                    filename = downloaded_pdf_date.strftime(f'{symbol}_%Y_%m_%d.pdf')
+                    pdf_path = fund_holdings_pdf_path / filename
+                    if not os.path.isfile(pdf_path):
+                        os.makedirs(fund_holdings_pdf_path, exist_ok=True)
+                        open(pdf_path, 'wb').write(pdf_bytes) # Save
+                else:
+                    print(f'Saved {symbol.upper()} holdings PDF is up to date')
             else:
-                raise Exception('PDF URL request failed')
-            # Extract text from PDF
-            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                texts = [page.extract_text() for page in pdf.pages]
-                full_text = ''
-                for text in texts:
-                    full_text += text
-            # Use regex to find date in PDF
-            date_re = re.compile(r'\d{2}\/\d{2}\/\d{4}')
-            matches = date_re.findall(full_text)
-            pdf_date_text = matches[0]
-            downloaded_pdf_date = est.localize(pd.to_datetime(pdf_date_text, format='%m/%d/%Y'))
-            print(f'Downloaded {symbol.upper()} holdings PDF date:   {str(downloaded_pdf_date.date())}')
-            # Save
-            if latest_saved_pdf_date is None or latest_saved_pdf_date < downloaded_pdf_date:
-                print(f'Saving downloaded {symbol.upper()} holdings PDF')
-                filename = downloaded_pdf_date.strftime(f'{symbol}_%Y_%m_%d.pdf')
-                pdf_path = fund_holdings_pdf_path / filename
-                if not os.path.isfile(pdf_path):
-                    os.makedirs(fund_holdings_pdf_path, exist_ok=True)
-                    open(pdf_path, 'wb').write(pdf_bytes) # Save
-            else:
-                print(f'Saved {symbol.upper()} holdings PDF is up to date')
+                print(f'Request for {symbol.upper()} holdings PDF URL failed:')
+                print(f'{response.status_code}: {response.reason}')
+                print(response.content)
         else:
             print(f'Saved {symbol.upper()} holdings PDF is up to date')
     return min(latest_saved_csv_dates) # Return minimum to check that latest data for all funds has been downloaded
