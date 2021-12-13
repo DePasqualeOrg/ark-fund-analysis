@@ -1,4 +1,5 @@
-pip install -r requirements.txt
+# pip install -r requirements.txt
+conda install -y -c conda-forge --file requirements.txt
 cp -n config_template.json config.json # If file exists, don't overwrite
 
 cat << END_OF_MESSAGE
