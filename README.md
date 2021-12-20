@@ -1,6 +1,6 @@
 # ARK Fund Analysis
 
-This project downloads the data that ARK Invest publishes on its actively managed ETFs and presents an analysis of that data over time in the form of a Jupyter notebook (see example [here](https://a-dpq.github.io/ark-fund-analysis/)).
+This project downloads the data that ARK Invest publishes on its actively managed ETFs and presents an analysis of that data over time in the form of a Jupyter notebook (see example [here](https://depasqualeorg.github.io/ark-fund-analysis/)).
 
 ### Installation and Usage
 
