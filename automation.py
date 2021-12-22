@@ -170,7 +170,7 @@ def download_daily_data(symbol):
     alphavantage_session.mount(alphavantage_api_endpoint, alphavantage_adapter) # Use `adapter` for all requests to endpoints that start with `alphavantage_api_endpoint`
     try:
         print(f'Getting daily historical data for {symbol.upper()}')
-        request_url = f'{alphavantage_api_endpoint}?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&outputsize=full&datatype=csv&apikey={alphavantage_api_key}'
+        request_url = f'{alphavantage_api_endpoint}?function=TIME_SERIES_DAILY&symbol={symbol}&outputsize=full&datatype=csv&apikey={alphavantage_api_key}'
         response = alphavantage_session.get(request_url)
         csv_bytes = response.content
         df = pd.read_csv(io.StringIO(csv_bytes.decode('utf-8')))
