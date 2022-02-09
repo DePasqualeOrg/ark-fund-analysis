@@ -310,7 +310,7 @@ def apply_style(df):
     if 'Total' in df.index:
         styled = styled.apply(total_row_bold)
     if 'unique_weight' in df.columns:
-        styled = styled.hide_columns(['unique_weight'])
+        styled = styled.hide(axis='columns')
     return styled
 
 def clamp(n, min_val, max_val):
