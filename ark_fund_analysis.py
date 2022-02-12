@@ -310,7 +310,7 @@ def apply_style(df):
     if 'Total' in df.index:
         styled = styled.apply(total_row_bold)
     if 'unique_weight' in df.columns:
-        styled = styled.hide(axis='columns')
+        styled = styled.hide(axis='columns', subset=['unique_weight'])
     return styled
 
 def clamp(n, min_val, max_val):
@@ -420,7 +420,7 @@ def process_unique_holdings(df):
             unique_holding_weight = comparison_df.loc[symbol, 'weight (%)']
             unique_holdings += unique_holding_weight
             comparison_df.loc[symbol, 'unique_weight'] = unique_holding_weight
-            comparison_df.loc[symbol, 'unique'] = True
+            comparison_df.loc[symbol, 'unique'] = '✔️'
     comparison_df = comparison_df.reset_index()
     comparison_df = add_totals(comparison_df)
     comparison_df.loc['Total', 'unique_weight'] = comparison_df['unique_weight'].sum()
