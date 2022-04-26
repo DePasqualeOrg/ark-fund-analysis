@@ -12,7 +12,6 @@ COMMAND="cd $ARK_FUND_ANALYSIS && $PYTHON_PATH cron_export_notebook.py"
 from pathlib import Path
 from datetime import datetime
 import pytz
-import subprocess
 import os
 import json
 
@@ -38,5 +37,4 @@ else:
 
 if notebook_updated is None or fund_data_updated > notebook_updated:
     download_fund_daily_price_data() # Calling this here rather than in the notebook to capture stderr in case of error
-    subprocess.run(f"cd '{base_dir}' && {config['git_path']} pull", shell=True, check=True) # Get the latest version of the notebook
     export_notebook()
