@@ -29,7 +29,7 @@ fund_holdings_csv_path = base_dir / 'data/ark_fund_holdings/csv'
 fund_holdings_pdf_path = base_dir / 'data/ark_fund_holdings/pdf'
 
 ark_session = cfscrape.create_scraper() # Use this instead of `requests` to prevent bot blocking by Cloudflare
-fund_pids = {'arkk': '1287', 'arkg': '1567', 'arkw': '1565', 'arkf': '1569', 'arkq': '1305', 'arkx': '1571'}
+fund_symbols = ['arkk', 'arkg', 'arkw', 'arkf', 'arkq', 'arkx']
 
 utc = pytz.utc
 est = pytz.timezone('US/Eastern')
@@ -51,56 +51,56 @@ def get_latest_saved_date(symbol, format, directory):
         return None
 
 def download_file_from_api(symbol, type, latest_saved_file_date):
+    filestems = {
+      'arkk': 'ARK_INNOVATION_ETF_ARKK_HOLDINGS',
+      'arkg': 'ARK_GENOMIC_REVOLUTION_ETF_ARKG_HOLDINGS',
+      'arkw': 'ARK_NEXT_GENERATION_INTERNET_ETF_ARKW_HOLDINGS',
+      'arkf': 'ARK_FINTECH_INNOVATION_ETF_ARKF_HOLDINGS',
+      'arkq': 'ARK_AUTONOMOUS_TECH._&_ROBOTICS_ETF_ARKQ_HOLDINGS',
+      'arkx': 'ARK_SPACE_EXPLORATION_&_INNOVATION_ETF_ARKX_HOLDINGS',
+    }
     # Get the download URL from ARK's API and then download the CSV or PDF file.
     # Download file
-    data = {'action': f'generate_fund_holdings_{type}', 'pid': fund_pids[symbol]}
-    response = ark_session.post(url='https://ark-funds.com/wp-admin/admin-ajax.php', data=data)
-    if response.ok: # True if `response.status_code` is less than 400
-        response_content = response.json()
-        if response_content['success'] is True:
-            download_url = response_content['file']
-            file_response = ark_session.get(download_url)
-            file_bytes = file_response.content
-        else:
-            raise Exception(f'Request for {symbol.upper()} holdings {type.upper()} URL failed')
+    download_url = f'https://ark-funds.com/wp-content/uploads/funds-etf-{type}/{filestems[symbol]}.{type}'
+    file_response = ark_session.get(download_url)
+    file_bytes = file_response.content
+    if type == 'pdf':
+        # Extract text from PDF
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            texts = [page.extract_text() for page in pdf.pages]
+            full_text = ''
+            for text in texts:
+                full_text += text
+        # Use regex to find date in PDF
+        date_re = re.compile(r'\d{2}\/\d{2}\/\d{4}')
+        matches = date_re.findall(full_text)
+        pdf_date_text = matches[0]
+        downloaded_file_date = est.localize(pd.to_datetime(pdf_date_text, format='%m/%d/%Y'))
+    elif type == 'csv':
+        # print(file_bytes.decode('utf-8'))
+        df = pd.read_csv(io.StringIO(file_bytes.decode('utf-8')))
+        df.dropna(subset=['fund'], inplace=True) # Remove extraneous rows
+        df['date'] = pd.to_datetime(df['date'], format='%m/%d/%Y') # Make date strings datetime objects
+        downloaded_file_date = est.localize(df.iloc[0]['date'])
+    else:
+        raise Exception(f'File type {type} is invalid.')
+    print(f'Downloaded {symbol.upper()} holdings {type.upper()} date:   {str(downloaded_file_date.date())}')
+    # Save
+    if latest_saved_file_date is None or latest_saved_file_date < downloaded_file_date:
+        print(f'Saving downloaded {symbol.upper()} holdings {type.upper()}')
+        filename = downloaded_file_date.strftime(f'{symbol}_%Y_%m_%d.{type}')
         if type == 'pdf':
-            # Extract text from PDF
-            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                texts = [page.extract_text() for page in pdf.pages]
-                full_text = ''
-                for text in texts:
-                    full_text += text
-            # Use regex to find date in PDF
-            date_re = re.compile(r'\d{2}\/\d{2}\/\d{4}')
-            matches = date_re.findall(full_text)
-            pdf_date_text = matches[0]
-            downloaded_file_date = est.localize(pd.to_datetime(pdf_date_text, format='%m/%d/%Y'))
+            directory = fund_holdings_pdf_path
         elif type == 'csv':
-            df = pd.read_csv(io.StringIO(file_bytes.decode('utf-8')))
-            df.dropna(subset=['fund'], inplace=True) # Remove extraneous rows
-            df['date'] = pd.to_datetime(df['date'], format='%m/%d/%Y') # Make date strings datetime objects
-            downloaded_file_date = est.localize(df.iloc[0]['date'])
+            directory = fund_holdings_csv_path
         else:
             raise Exception(f'File type {type} is invalid.')
-        print(f'Downloaded {symbol.upper()} holdings {type.upper()} date:   {str(downloaded_file_date.date())}')
-        # Save
-        if latest_saved_file_date is None or latest_saved_file_date < downloaded_file_date:
-            print(f'Saving downloaded {symbol.upper()} holdings {type.upper()}')
-            filename = downloaded_file_date.strftime(f'{symbol}_%Y_%m_%d.{type}')
-            if type == 'pdf':
-                directory = fund_holdings_pdf_path
-            elif type == 'csv':
-                directory = fund_holdings_csv_path
-            else:
-                raise Exception(f'File type {type} is invalid.')
-            file_path = directory / filename
-            if not os.path.isfile(file_path):
-                os.makedirs(directory, exist_ok=True)
-                open(file_path, 'wb').write(file_bytes) # Save
-        else:
-            print(f'Saved {symbol.upper()} holdings {type.upper()} is up to date')
+        file_path = directory / filename
+        if not os.path.isfile(file_path):
+            os.makedirs(directory, exist_ok=True)
+            open(file_path, 'wb').write(file_bytes) # Save
     else:
-        raise Exception(f'Request for {symbol.upper()} holdings {type.upper()} URL failed: {response.status_code}: {response.reason}, {response.content}')
+        print(f'Saved {symbol.upper()} holdings {type.upper()} is up to date')
 
 def download_fund_holdings_data():
     now_utc = datetime.now(utc)
@@ -119,7 +119,7 @@ def download_fund_holdings_data():
     print(f'Latest session date:         {latest_session.date()}')
     latest_saved_csv_dates = []
     latest_saved_pdf_dates = []
-    for symbol, url in fund_pids.items():
+    for symbol in fund_symbols:
         # Check saved files
         latest_saved_csv_date = get_latest_saved_date(symbol, 'csv', fund_holdings_csv_path)
         if latest_saved_csv_date is not None:
