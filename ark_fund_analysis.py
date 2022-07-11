@@ -316,8 +316,11 @@ def apply_style(df):
 def clamp(n, min_val, max_val):
     return max(min_val, min(n, max_val))
 
-def date_to_datetime_with_timezone(date):
-    return datetime(date.year, date.month, date.day).replace(tzinfo=utc) # Alternative method: return pd.Timestamp(date).tz_localize(utc)
+# def date_to_datetime_with_timezone(date):
+#     return datetime(date.year, date.month, date.day).replace(tzinfo=utc) # Alternative method: return pd.Timestamp(date).tz_localize(utc)
+
+def date_to_datetime(date):
+    return datetime(date.year, date.month, date.day)
 
 def process_for_change_in_value(change_in_holdings_df):
     min_lum = 0.45
@@ -667,7 +670,7 @@ for fund in funds:
     funds[fund]['earliest_date_from_data'] = min(funds[fund]['dates_from_data'])
     funds[fund]['latest_date_from_data'] = max(funds[fund]['dates_from_data'])
     # Format date for indexing in `us_calendar.sessions_in_range`
-    funds[fund]['dates_from_calendar'] = [session.date() for session in us_calendar.sessions_in_range(date_to_datetime_with_timezone(funds[fund]['earliest_date_from_data']), date_to_datetime_with_timezone(funds[fund]['latest_date_from_data']))]
+    funds[fund]['dates_from_calendar'] = [session.date() for session in us_calendar.sessions_in_range(date_to_datetime(funds[fund]['earliest_date_from_data']), date_to_datetime(funds[fund]['latest_date_from_data']))]
     funds[fund]['missing_dates'] = [session for session in funds[fund]['dates_from_calendar'] if session not in funds[fund]['dates_from_data']]
     if len(funds[fund]['missing_dates']) > 0:
         print(f"{fund.upper()} holdings data is missing for the following dates: {funds[fund]['missing_dates']}")
